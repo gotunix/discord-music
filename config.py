@@ -22,4 +22,4 @@ PLEX_MUSIC_LIBRARY = os.environ.get('PLEX_MUSIC_LIBRARY', 'Music') # Library nam
 # Audio
 AUDIO_QUALITY = os.environ.get('AUDIO_QUALITY', 'highQuality')  # lowQuality, mediumQuality, highQuality
 FFMPEG_PATH = os.environ.get('FFMPEG_PATH', 'ffmpeg')
-DEFAULT_VOLUME = float(os.environ.get('DEFAULT_VOLUME', '0.5'))  # 0.0 - 1.0
+DEFAULT_VOLUME = float(os.environ.get('DEFAULT_VOLUME', '0.03'))  # 0.0 - 1.0

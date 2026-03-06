@@ -472,6 +472,23 @@ async def cmd_play(ctx: commands.Context, *, query: str = ''):
                 return
             url = results[0].url
 
+        # Detect playlist URLs and load all tracks
+        if 'list=' in url and '/watch?' not in url or url.startswith(('https://www.youtube.com/playlist', 'https://youtube.com/playlist')):
+            await ctx.send('⏳ Loading playlist... (this may take a moment)')
+            loop = asyncio.get_event_loop()
+            tracks = await loop.run_in_executor(None, youtube.extract_playlist, url)
+            if not tracks:
+                await ctx.send('❌ Could not load playlist.')
+                return
+            for t in tracks:
+                player.add_to_queue(t)
+            await ctx.send(f'🎶 Added **{len(tracks)}** tracks to the queue.')
+            if not player.is_playing:
+                track = await player.play_youtube_next()
+                if track:
+                    await _send_now_playing(ctx, track)
+            return
+
         await ctx.send('⏳ Extracting audio...')
         loop = asyncio.get_event_loop()
         yt_track = await loop.run_in_executor(None, youtube.extract, url)
@@ -686,24 +703,71 @@ async def cmd_plexalbum(ctx: commands.Context, *, name: str = ''):
             await ctx.send('❌ Join a voice channel first, or use `!join`.')
             return
 
-    await ctx.send(f'⏳ Loading album "**{name}**"...')
-
     loop = asyncio.get_event_loop()
-    tracks = await loop.run_in_executor(None, plex.get_album_tracks, name)
 
-    if not tracks:
+    # --- Pick from a previous disambiguation list ---
+    if name.strip().isdigit():
+        idx = int(name) - 1
+        if not plex._last_album_search:
+            await ctx.send('❌ No album search results. Use `!plexalbum <album name>` first.')
+            return
+        if idx < 0 or idx >= len(plex._last_album_search):
+            await ctx.send(f'❌ Choose 1-{len(plex._last_album_search)}.')
+            return
+
+        info = plex._last_album_search[idx]
+        await ctx.send(f'⏳ Loading **{info["title"]}** by **{info["artist"]}**...')
+        tracks = await loop.run_in_executor(None, plex.get_album_tracks_by_index, idx)
+        if not tracks:
+            await ctx.send('❌ Could not load tracks from that album.')
+            return
+
+        for t in tracks:
+            player.add_to_plex_queue(t)
+        await ctx.send(
+            f'💿 Queued **{len(tracks)}** tracks from '
+            f'**{info["title"]}** by **{info["artist"]}**.'
+        )
+        if not player.is_playing:
+            track = await player.play_plex_next()
+            if track:
+                await _send_now_playing(ctx, track)
+        return
+
+    # --- Search for albums by name ---
+    await ctx.send(f'⏳ Searching for album "**{name}**"...')
+    results = await loop.run_in_executor(None, plex.search_albums, name)
+
+    if not results:
         await ctx.send(f'❌ No album matching "**{name}**" in your Plex library.')
         return
 
-    for t in tracks:
-        player.add_to_plex_queue(t)
+    if len(results) == 1:
+        # Only one match — queue it immediately
+        tracks = await loop.run_in_executor(None, plex.get_album_tracks_by_index, 0)
+        if not tracks:
+            await ctx.send('❌ Could not load tracks from that album.')
+            return
 
-    await ctx.send(f'💿 Queued **{len(tracks)}** tracks from **{tracks[0].album}**.')
+        for t in tracks:
+            player.add_to_plex_queue(t)
+        await ctx.send(
+            f'💿 Queued **{len(tracks)}** tracks from '
+            f'**{results[0]["title"]}** by **{results[0]["artist"]}**.'
+        )
+        if not player.is_playing:
+            track = await player.play_plex_next()
+            if track:
+                await _send_now_playing(ctx, track)
+        return
 
-    if not player.is_playing:
-        track = await player.play_plex_next()
-        if track:
-            await _send_now_playing(ctx, track)
+    # Multiple matches — show disambiguation list
+    lines = [f'💿 Multiple albums match "**{name}**":\n']
+    for i, r in enumerate(results, 1):
+        year = f' ({r["year"]})' if r["year"] else ''
+        lines.append(f'`{i:2d}.` **{r["title"]}** — {r["artist"]}{year}  [{r["track_count"]} tracks]')
+    lines.append(f'\nUse `!plexalbum <number>` to pick one.')
+    await ctx.send('\n'.join(lines))
 
 
 @bot.command(name='plexartist', aliases=['part'], help='Queue all tracks by artist: !plexartist <name>')

@@ -130,7 +130,8 @@ class YouTubeClient:
 
         Returns a YTTrack with a direct stream URL suitable for ffmpeg.
         """
-        with yt_dlp.YoutubeDL(_YDL_EXTRACT_OPTS) as ydl:
+        opts = {**_YDL_EXTRACT_OPTS, 'noplaylist': True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
         if not info:
@@ -149,9 +150,15 @@ class YouTubeClient:
         """
         Extract all tracks from a YouTube playlist URL.
 
-        Returns a list of YTTrack objects.
+        Uses flat extraction (metadata only) for speed — actual audio
+        is downloaded at play time by YTAudioSource.
         """
-        opts = {**_YDL_EXTRACT_OPTS, 'noplaylist': False}
+        opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': 'in_playlist',
+            'noplaylist': False,
+        }
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -160,11 +167,26 @@ class YouTubeClient:
         if not info:
             return tracks
 
-        entries = info.get('entries', [info])
+        entries = info.get('entries', [])
         for entry in entries:
-            if not entry or not entry.get('url'):
+            if not entry:
                 continue
-            tracks.append(self._make_track(entry))
+            video_id = entry.get('id', '')
+            webpage_url = entry.get(
+                'webpage_url',
+                entry.get('url', f'https://www.youtube.com/watch?v={video_id}')
+                if video_id else '',
+            )
+            if not webpage_url:
+                continue
+            tracks.append(YTTrack(
+                title=entry.get('title', 'Unknown'),
+                url='',   # resolved at play time by YTAudioSource
+                webpage_url=webpage_url,
+                duration=int(entry.get('duration', 0) or 0),
+                thumbnail=entry.get('thumbnail', ''),
+                uploader=entry.get('uploader', entry.get('channel', '')),
+            ))
 
         log.info('Extracted %d tracks from playlist.', len(tracks))
         return tracks

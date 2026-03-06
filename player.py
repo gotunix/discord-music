@@ -32,7 +32,7 @@ FFMPEG_OPTIONS = {
         '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
         ' -err_detect ignore_err'
     ),
-    'options': '-vn -ar 48000 -ac 2 -fflags +discardcorrupt',
+    'options': '-vn -f s16le -acodec pcm_s16le -ar 48000 -ac 2 -fflags +discardcorrupt',
 }
 
 
@@ -495,7 +495,9 @@ class Player:
     async def skip(self) -> Optional[Any]:
         """Skip to the next track (works for all modes)."""
         log.info('Skipping...')
-        # Stop current playback first
+        # Disable auto-advance so the after_playback callback doesn't
+        # race with the explicit play call below.
+        self._playing = False
         if self.voice_client and self.voice_client.is_playing():
             self.voice_client.stop()
         if self.mode == self.MODE_PLEX:

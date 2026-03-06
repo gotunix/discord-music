@@ -83,6 +83,8 @@ class PlexClient:
         self._music_library = None
         self._last_search: List[PlexSearchResult] = []
         self._last_search_raw = []     # raw plexapi objects for extraction
+        self._last_album_search = []   # cached album search results (dicts)
+        self._last_album_search_raw = []  # raw plexapi album objects
 
     @property
     def connected(self) -> bool:
@@ -282,6 +284,61 @@ class PlexClient:
         album = albums[0]
         tracks = [self._plex_to_track(t) for t in album.tracks()]
         log.info('Found album "%s" with %d tracks.', album.title, len(tracks))
+        return tracks
+
+    def search_albums(self, album_name: str, limit: int = 10) -> list:
+        """
+        Search for albums by name and cache results for disambiguation.
+
+        Returns a list of dicts with 'title', 'artist', 'year', and
+        'track_count' keys.  Raw plexapi objects are cached so
+        ``get_album_tracks_by_index`` can retrieve the actual tracks.
+        """
+        self._last_album_search = []
+        self._last_album_search_raw = []
+
+        if not self._music_library:
+            return []
+
+        try:
+            albums = self._music_library.searchAlbums(
+                title=album_name, limit=limit,
+            )
+        except Exception as exc:
+            log.error('Plex album search error: %s', exc)
+            return []
+
+        if not albums:
+            return []
+
+        results = []
+        for a in albums:
+            results.append({
+                'title': a.title,
+                'artist': a.parentTitle or 'Unknown',
+                'year': getattr(a, 'year', None) or '',
+                'track_count': len(a.tracks()) if hasattr(a, 'tracks') else 0,
+            })
+        self._last_album_search = results
+        self._last_album_search_raw = albums
+        log.info(
+            'Album search "%s": %d results.', album_name, len(results),
+        )
+        return results
+
+    def get_album_tracks_by_index(self, index: int) -> List[PlexTrack]:
+        """
+        Get tracks from a cached album search result by index (0-based).
+        """
+        if index < 0 or index >= len(self._last_album_search_raw):
+            return []
+
+        album = self._last_album_search_raw[index]
+        tracks = [self._plex_to_track(t) for t in album.tracks()]
+        log.info(
+            'Loaded %d tracks from album "%s".',
+            len(tracks), album.title,
+        )
         return tracks
 
     def get_artist_tracks(self, artist_name: str, shuffle: bool = True) -> List[PlexTrack]:
