@@ -13,6 +13,7 @@ auto-advancing, queue management, and volume control.
 import asyncio
 import logging
 import os
+import random
 import subprocess
 from collections import deque
 from typing import Any, Optional, Union
@@ -155,6 +156,7 @@ class Player:
         self.volume: float = config.DEFAULT_VOLUME
         self.mode: str = self.MODE_IDLE
         self._playing = False
+        self._paused = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         # YouTube queue
@@ -168,6 +170,10 @@ class Player:
     @property
     def is_playing(self) -> bool:
         return self.is_connected and self._playing
+
+    @property
+    def is_paused(self) -> bool:
+        return self.is_connected and self._paused
 
     @property
     def queue(self) -> list:
@@ -316,6 +322,31 @@ class Player:
         self._yt_queue.clear()
         return count
 
+    def move_in_queue(self, from_pos: int, to_pos: int):
+        """Move a track in the YouTube queue. Positions are 1-indexed."""
+        items = list(self._yt_queue)
+        track = items.pop(from_pos - 1)
+        items.insert(to_pos - 1, track)
+        self._yt_queue = deque(items)
+        log.info('Moved queue item %d -> %d: %s', from_pos, to_pos, track.title)
+        return track
+
+    def remove_from_queue(self, pos: int):
+        """Remove a track at the given 1-indexed position from the YouTube queue."""
+        items = list(self._yt_queue)
+        track = items.pop(pos - 1)
+        self._yt_queue = deque(items)
+        log.info('Removed from queue position %d: %s', pos, track.title)
+        return track
+
+    def shuffle_queue(self) -> int:
+        """Shuffle the YouTube queue in place. Returns queue length."""
+        items = list(self._yt_queue)
+        random.shuffle(items)
+        self._yt_queue = deque(items)
+        log.info('Shuffled YouTube queue (%d tracks).', len(items))
+        return len(items)
+
     async def play_youtube_next(self) -> Optional[Any]:
         """
         Play the next track from the YouTube queue.
@@ -406,6 +437,31 @@ class Player:
         count = len(self._plex_queue)
         self._plex_queue.clear()
         return count
+
+    def move_in_plex_queue(self, from_pos: int, to_pos: int):
+        """Move a track in the Plex queue. Positions are 1-indexed."""
+        items = list(self._plex_queue)
+        track = items.pop(from_pos - 1)
+        items.insert(to_pos - 1, track)
+        self._plex_queue = deque(items)
+        log.info('Moved Plex queue item %d -> %d: %s', from_pos, to_pos, track.title)
+        return track
+
+    def remove_from_plex_queue(self, pos: int):
+        """Remove a track at the given 1-indexed position from the Plex queue."""
+        items = list(self._plex_queue)
+        track = items.pop(pos - 1)
+        self._plex_queue = deque(items)
+        log.info('Removed from Plex queue position %d: %s', pos, track.title)
+        return track
+
+    def shuffle_plex_queue(self) -> int:
+        """Shuffle the Plex queue in place. Returns queue length."""
+        items = list(self._plex_queue)
+        random.shuffle(items)
+        self._plex_queue = deque(items)
+        log.info('Shuffled Plex queue (%d tracks).', len(items))
+        return len(items)
 
     @property
     def plex_queue(self) -> list:
@@ -515,9 +571,32 @@ class Player:
             self.voice_client.source.volume = self.volume
         log.info('Volume set to %.0f%%', self.volume * 100)
 
+    def pause(self) -> bool:
+        """Pause playback. Returns True if paused successfully."""
+        if not self.is_connected or not self._playing:
+            return False
+        if self.voice_client.is_playing():
+            self.voice_client.pause()
+            self._paused = True
+            log.info('Playback paused.')
+            return True
+        return False
+
+    def resume(self) -> bool:
+        """Resume playback. Returns True if resumed successfully."""
+        if not self.is_connected or not self._paused:
+            return False
+        if self.voice_client.is_paused():
+            self.voice_client.resume()
+            self._paused = False
+            log.info('Playback resumed.')
+            return True
+        return False
+
     async def stop(self) -> None:
         """Stop playback without disconnecting."""
         self._playing = False
+        self._paused = False
         self.mode = self.MODE_IDLE
         self._yt_queue.clear()
         self._plex_queue.clear()

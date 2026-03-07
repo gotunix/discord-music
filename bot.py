@@ -26,7 +26,12 @@ Shared Commands::
 
     !playing        Show the current track
     !skip           Skip to the next track
+    !pause          Pause playback
+    !resume         Resume playback
     !volume <0-100> Set playback volume
+    !move <from> <to> Move a track in the queue
+    !remove <pos>   Remove a track from the queue
+    !shuffle        Shuffle the queue
     !stop           Stop playback (stays in channel)
 
 Environment variables::
@@ -543,22 +548,30 @@ async def cmd_playlist(ctx: commands.Context, url: str = ''):
             await _send_now_playing(ctx, track)
 
 
-@bot.command(name='queue', aliases=['q'], help='Show the YouTube queue')
+@bot.command(name='queue', aliases=['q'], help='Show the current queue')
 @commands.guild_only()
 async def cmd_queue(ctx: commands.Context):
     player = get_player(ctx.guild.id)
 
-    if not player.current_track and player.queue_length == 0:
+    # Pick the active queue based on mode
+    if player.mode == 'plex':
+        queue = player.plex_queue
+        q_len = player.plex_queue_length
+    else:
+        queue = player.queue
+        q_len = player.queue_length
+
+    if not player.current_track and q_len == 0:
         await ctx.send('💭 Queue is empty. Use `!play` or `!yt` to add tracks.')
         return
 
     lines = []
     if player.current_track:
-        lines.append(f'🎵 **Now Playing:** {player.current_track.display}')
+        paused = ' ⏸️' if player.is_paused else ''
+        lines.append(f'🎵 **Now Playing:** {player.current_track.display}{paused}')
         lines.append(f'   Mode: {player.mode.capitalize()}')
         lines.append('')
 
-    queue = player.queue
     if queue:
         lines.append(f'📝 **Queue** ({len(queue)} tracks)\n')
         for i, t in enumerate(queue[:15], 1):
@@ -577,6 +590,93 @@ async def cmd_clear(ctx: commands.Context):
     player = get_player(ctx.guild.id)
     count = player.clear_queue()
     await ctx.send(f'🗑️ Cleared **{count}** tracks from the queue.')
+
+
+@bot.command(name='pause', help='Pause playback')
+@commands.guild_only()
+async def cmd_pause(ctx: commands.Context):
+    player = get_player(ctx.guild.id)
+    if player.pause():
+        await ctx.send('⏸️ Paused.')
+    else:
+        await ctx.send('❌ Nothing is playing.')
+
+
+@bot.command(name='resume', aliases=['unpause'], help='Resume playback')
+@commands.guild_only()
+async def cmd_resume(ctx: commands.Context):
+    player = get_player(ctx.guild.id)
+    if player.resume():
+        await ctx.send('▶️ Resumed.')
+    else:
+        await ctx.send('❌ Nothing is paused.')
+
+
+@bot.command(name='move', aliases=['mv'], help='Move a track in the queue: !move <from> <to>')
+@commands.guild_only()
+async def cmd_move(ctx: commands.Context, from_pos: int = 0, to_pos: int = 0):
+    if from_pos < 1 or to_pos < 1:
+        await ctx.send('Usage: `!move <from> <to>` (positions from `!queue`)')
+        return
+
+    player = get_player(ctx.guild.id)
+
+    # Pick the active queue based on mode
+    if player.mode == 'plex':
+        q_len = player.plex_queue_length
+        if from_pos > q_len or to_pos > q_len:
+            await ctx.send(f'❌ Queue only has **{q_len}** tracks.')
+            return
+        track = player.move_in_plex_queue(from_pos, to_pos)
+    else:
+        q_len = player.queue_length
+        if from_pos > q_len or to_pos > q_len:
+            await ctx.send(f'❌ Queue only has **{q_len}** tracks.')
+            return
+        track = player.move_in_queue(from_pos, to_pos)
+
+    await ctx.send(f'↕️ Moved **{track.display_short if hasattr(track, "display_short") else track.title}** from #{from_pos} → #{to_pos}')
+
+
+@bot.command(name='remove', aliases=['rm'], help='Remove a track from the queue: !remove <position>')
+@commands.guild_only()
+async def cmd_remove(ctx: commands.Context, pos: int = 0):
+    if pos < 1:
+        await ctx.send('Usage: `!remove <position>` (positions from `!queue`)')
+        return
+
+    player = get_player(ctx.guild.id)
+
+    if player.mode == 'plex':
+        q_len = player.plex_queue_length
+        if pos > q_len:
+            await ctx.send(f'❌ Queue only has **{q_len}** tracks.')
+            return
+        track = player.remove_from_plex_queue(pos)
+    else:
+        q_len = player.queue_length
+        if pos > q_len:
+            await ctx.send(f'❌ Queue only has **{q_len}** tracks.')
+            return
+        track = player.remove_from_queue(pos)
+
+    await ctx.send(f'🗑️ Removed #{pos}: **{track.display_short if hasattr(track, "display_short") else track.title}**')
+
+
+@bot.command(name='shuffle', help='Shuffle the current queue')
+@commands.guild_only()
+async def cmd_shuffle(ctx: commands.Context):
+    player = get_player(ctx.guild.id)
+
+    if player.mode == 'plex':
+        count = player.shuffle_plex_queue()
+    else:
+        count = player.shuffle_queue()
+
+    if count == 0:
+        await ctx.send('❌ Queue is empty — nothing to shuffle.')
+    else:
+        await ctx.send(f'🔀 Shuffled **{count}** tracks.')
 
 
 # --------------------------------------------------------- Plex commands
@@ -1022,3 +1122,8 @@ if __name__ == '__main__':
             bot.add_command(cmd_plexartist)
             bot.add_command(cmd_plexplaylists)
             bot.add_command(cmd_plexplaylist)
+            bot.add_command(cmd_pause)
+            bot.add_command(cmd_resume)
+            bot.add_command(cmd_move)
+            bot.add_command(cmd_remove)
+            bot.add_command(cmd_shuffle)
